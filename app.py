@@ -1,12 +1,11 @@
 """Customer Support Chatbot - Streamlit Application."""
 
-import asyncio
 import os
 import json
 from dotenv import load_dotenv
 import streamlit as st
-from openai import AsyncOpenAI
-from mcp_client import MCPClient
+from openai import OpenAI
+from mcp_client_sync import MCPClient
 
 # Load environment variables
 load_dotenv()
@@ -26,18 +25,18 @@ if "mcp_client" not in st.session_state:
 if "tools" not in st.session_state:
     st.session_state.tools = []
 if "openai_client" not in st.session_state:
-    st.session_state.openai_client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+    st.session_state.openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 
-async def initialize_mcp():
+def initialize_mcp():
     """Initialize MCP client and load tools."""
     if st.session_state.mcp_client is None:
         mcp_url = os.getenv("MCP_SERVER_URL")
         mcp_client = MCPClient(mcp_url)
 
         # Initialize and get tools
-        await mcp_client.initialize()
-        mcp_tools = await mcp_client.list_tools()
+        mcp_client.initialize()
+        mcp_tools = mcp_client.list_tools()
 
         # Convert to OpenAI format
         openai_tools = mcp_client.tools_to_openai_format(mcp_tools)
@@ -49,11 +48,11 @@ async def initialize_mcp():
     return len(st.session_state.tools)
 
 
-async def call_openai_with_tools(messages):
+def call_openai_with_tools(messages):
     """Call OpenAI with function calling support."""
     client = st.session_state.openai_client
 
-    response = await client.chat.completions.create(
+    response = client.chat.completions.create(
         model="gpt-4o-mini",
         messages=messages,
         tools=st.session_state.tools,
@@ -63,7 +62,7 @@ async def call_openai_with_tools(messages):
     return response
 
 
-async def process_message(user_message: str):
+def process_message(user_message: str):
     """Process user message with OpenAI and MCP tools."""
     # Add user message to chat history
     st.session_state.messages.append({
@@ -87,7 +86,7 @@ Be friendly, helpful, and professional. Use the available tools to provide accur
     ] + st.session_state.messages
 
     # Call OpenAI
-    response = await call_openai_with_tools(messages)
+    response = call_openai_with_tools(messages)
     assistant_message = response.choices[0].message
 
     # Handle tool calls
@@ -117,7 +116,7 @@ Be friendly, helpful, and professional. Use the available tools to provide accur
 
             # Call MCP tool
             mcp_client = st.session_state.mcp_client
-            tool_result = await mcp_client.call_tool(function_name, function_args)
+            tool_result = mcp_client.call_tool(function_name, function_args)
 
             # Add tool result to messages
             st.session_state.messages.append({
@@ -128,20 +127,20 @@ Be friendly, helpful, and professional. Use the available tools to provide accur
             })
 
         # Get final response from OpenAI
-        final_response = await call_openai_with_tools(
+        final_response = call_openai_with_tools(
             [{"role": "system", "content": messages[0]["content"]}] + st.session_state.messages
         )
         final_message = final_response.choices[0].message
 
         st.session_state.messages.append({
             "role": "assistant",
-            "content": final_message.content
+            "content": final_message.content if final_message.content else ""
         })
     else:
         # No tool calls, just add the response
         st.session_state.messages.append({
             "role": "assistant",
-            "content": assistant_message.content
+            "content": assistant_message.content if assistant_message.content else ""
         })
 
 
@@ -154,7 +153,7 @@ with st.sidebar:
     st.header("System Status")
 
     # Run initialization
-    num_tools = asyncio.run(initialize_mcp())
+    num_tools = initialize_mcp()
 
     st.success(f"✓ MCP Connected")
     st.info(f"📦 {num_tools} tools available")
@@ -186,7 +185,9 @@ for msg in st.session_state.messages:
                 for tc in msg["tool_calls"]:
                     func_data = tc["function"]
                     st.caption(f"🔧 Calling tool: `{func_data['name']}`")
-            elif msg.get("content"):
+
+            # Always show content if it exists (separate from tool_calls)
+            if msg.get("content") and msg["content"].strip():
                 st.write(msg["content"])
 
     elif msg["role"] == "tool":
@@ -201,5 +202,5 @@ if prompt := st.chat_input("How can I help you today?"):
 
     with st.chat_message("assistant"):
         with st.spinner("Thinking..."):
-            asyncio.run(process_message(prompt))
+            process_message(prompt)
             st.rerun()
